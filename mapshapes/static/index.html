@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Map Shape Detector</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #fff; --text: #1d2330; --muted: #667085;
+    --border: #e3e6ec; --accent: #2f6fed; --accent-weak: #e8effd;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --panel: #1b1f27; --text: #e7eaf0; --muted: #98a1b3;
+      --border: #2c323d; --accent: #6b9bff; --accent-weak: #1f2a40;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 system-ui, -apple-system, Segoe UI, sans-serif; background: var(--bg); color: var(--text); }
+  header { padding: 14px 20px; border-bottom: 1px solid var(--border); background: var(--panel); display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  header h1 { font-size: 17px; margin: 0; }
+  header span { color: var(--muted); }
+  main { display: grid; grid-template-columns: 290px 1fr 330px; gap: 16px; padding: 16px; align-items: start; }
+  @media (max-width: 1100px) { main { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+  .panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 10px; }
+  label { display: block; margin: 12px 0 4px; font-weight: 500; }
+  label small { color: var(--muted); font-weight: 400; }
+  select, input[type=number], input[type=text] { width: 100%; padding: 7px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
+  input[type=range] { width: 100%; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  button { font: inherit; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel); color: var(--text); cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  .drop { border: 2px dashed var(--border); border-radius: 10px; padding: 18px; text-align: center; color: var(--muted); cursor: pointer; }
+  .drop.over { border-color: var(--accent); background: var(--accent-weak); }
+  .stage { position: relative; min-height: 360px; display: flex; align-items: center; justify-content: center; overflow: auto; }
+  .stage .empty { color: var(--muted); }
+  .canvas-wrap { position: relative; display: inline-block; max-width: 100%; }
+  .canvas-wrap img { display: block; max-width: 100%; height: auto; }
+  .canvas-wrap svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .canvas-wrap.picking { cursor: crosshair; }
+  svg polygon { fill-opacity: .12; stroke-width: 2.5; vector-effect: non-scaling-stroke; cursor: pointer; }
+  svg polygon.hl { fill-opacity: .4; stroke-width: 4; }
+  svg polygon.dim { opacity: .15; }
+  .swatch { width: 28px; height: 28px; border-radius: 6px; border: 1px solid var(--border); flex: none; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .chip { border-radius: 999px; padding: 3px 10px; font-size: 12px; border: 1px solid var(--border); background: var(--bg); cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
+  .chip.off { opacity: .45; }
+  .chip i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tr.hl td { background: var(--accent-weak); }
+  .list { max-height: 520px; overflow: auto; }
+  .status { color: var(--muted); font-size: 12px; min-height: 18px; margin-top: 8px; }
+  .status.err { color: #d33; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  details summary { cursor: pointer; margin-top: 12px; font-weight: 500; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Map Shape Detector</h1>
+  <span>Upload a map image to find triangles, rectangles, circles, polygons and more.</span>
+</header>
+<main>
+  <section class="panel">
+    <h2>Map</h2>
+    <div class="drop" id="drop">Drop a map image here<br>or click to choose a file
+      <input type="file" id="file" accept="image/*" hidden>
+    </div>
+    <div class="actions"><button id="sample">Use sample map</button></div>
+
+    <h2 style="margin-top:18px">Detection</h2>
+    <label for="mode">Mode</label>
+    <select id="mode">
+      <option value="regions">Colour regions (vector / rendered maps)</option>
+      <option value="edges">Edges (line drawings, scans)</option>
+      <option value="color">Single colour (click map to pick)</option>
+    </select>
+
+    <div id="regionsOpts">
+      <label for="colors">Colours <small id="colorsVal">6</small></label>
+      <input type="range" id="colors" min="2" max="16" value="6">
+      <div class="hint">How many dominant fill colours the map is split into.</div>
+    </div>
+
+    <div id="colorOpts" hidden>
+      <label>Target colour</label>
+      <div class="row">
+        <div class="swatch" id="swatch"></div>
+        <input type="text" id="color" placeholder="#a0c8e6" value="">
+      </div>
+      <div class="hint">Click anywhere on the map to pick a colour.</div>
+      <label for="tolerance">Tolerance <small id="toleranceVal">20</small></label>
+      <input type="range" id="tolerance" min="2" max="80" value="20">
+    </div>
+
+    <label for="minArea">Minimum area <small id="minAreaVal">150 px²</small></label>
+    <input type="range" id="minArea" min="0" max="5000" step="10" value="150">
+
+    <label for="epsilon">Outline simplification <small id="epsilonVal">0.020</small></label>
+    <input type="range" id="epsilon" min="0.005" max="0.08" step="0.001" value="0.02">
+
+    <label for="denoise">Noise removal <small id="denoiseVal">3</small></label>
+    <input type="range" id="denoise" min="0" max="15" value="3">
+    <div class="hint">Erases thin text and specks before tracing.</div>
+
+    <details>
+      <summary>Georeference (optional)</summary>
+      <div class="hint">Map edges in degrees. When set, the GeoJSON export uses longitude/latitude instead of pixels.</div>
+      <div class="row" style="margin-top:6px">
+        <input type="number" id="west" placeholder="West" step="any">
+        <input type="number" id="east" placeholder="East" step="any">
+      </div>
+      <div class="row" style="margin-top:6px">
+        <input type="number" id="south" placeholder="South" step="any">
+        <input type="number" id="north" placeholder="North" step="any">
+      </div>
+    </details>
+
+    <div class="actions">
+      <button class="primary" id="run" disabled>Detect shapes</button>
+    </div>
+    <div class="status" id="status"></div>
+  </section>
+
+  <section class="panel stage" id="stage">
+    <div class="empty" id="empty">No map loaded yet.</div>
+    <div class="canvas-wrap" id="wrap" hidden>
+      <img id="img" alt="Uploaded map">
+      <svg id="overlay" preserveAspectRatio="none"></svg>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Shapes <span id="count"></span></h2>
+    <div class="chips" id="chips"></div>
+    <div class="list">
+      <table>
+        <thead><tr><th>#</th><th>Type</th><th class="num">Area</th><th class="num">Sides</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <div class="actions">
+      <button id="dlGeo" disabled>Download GeoJSON</button>
+      <button id="dlPng" disabled>Download annotated PNG</button>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let file = null, result = null, hidden = new Set(), timer = null;
+
+function setStatus(msg, err = false) { $('status').textContent = msg; $('status').className = 'status' + (err ? ' err' : ''); }
+
+function loadFile(f) {
+  file = f;
+  $('img').src = URL.createObjectURL(f);
+  $('wrap').hidden = false; $('empty').hidden = true; $('run').disabled = false;
+  $('img').onload = () => detect();
+}
+
+$('drop').onclick = () => $('file').click();
+$('file').onchange = e => e.target.files[0] && loadFile(e.target.files[0]);
+['dragover', 'dragenter'].forEach(ev => $('drop').addEventListener(ev, e => { e.preventDefault(); $('drop').classList.add('over'); }));
+['dragleave', 'drop'].forEach(ev => $('drop').addEventListener(ev, e => { e.preventDefault(); $('drop').classList.remove('over'); }));
+$('drop').addEventListener('drop', e => e.dataTransfer.files[0] && loadFile(e.dataTransfer.files[0]));
+$('sample').onclick = async () => {
+  const r = await fetch('/static/sample_map.png');
+  loadFile(new File([await r.blob()], 'sample_map.png', { type: 'image/png' }));
+};
+
+function syncLabels() {
+  $('colorsVal').textContent = $('colors').value;
+  $('toleranceVal').textContent = $('tolerance').value;
+  $('minAreaVal').textContent = $('minArea').value + ' px²';
+  $('epsilonVal').textContent = Number($('epsilon').value).toFixed(3);
+  $('denoiseVal').textContent = $('denoise').value;
+  const mode = $('mode').value;
+  $('regionsOpts').hidden = mode !== 'regions';
+  $('colorOpts').hidden = mode !== 'color';
+  $('wrap').classList.toggle('picking', mode === 'color');
+  $('swatch').style.background = $('color').value || 'transparent';
+}
+document.querySelectorAll('select, input').forEach(el => el.addEventListener('input', () => {
+  syncLabels();
+  if (file && el.type !== 'file') { clearTimeout(timer); timer = setTimeout(detect, 350); }
+}));
+syncLabels();
+
+// Colour picking: sample the clicked pixel from the original image.
+$('wrap').addEventListener('click', e => {
+  if ($('mode').value !== 'color') return;
+  const img = $('img'), rect = img.getBoundingClientRect();
+  const x = Math.floor((e.clientX - rect.left) * img.naturalWidth / rect.width);
+  const y = Math.floor((e.clientY - rect.top) * img.naturalHeight / rect.height);
+  const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight;
+  const ctx = c.getContext('2d'); ctx.drawImage(img, 0, 0);
+  const [r, g, b] = ctx.getImageData(x, y, 1, 1).data;
+  $('color').value = '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('');
+  syncLabels(); detect();
+});
+
+async function detect() {
+  if (!file) return;
+  const mode = $('mode').value;
+  if (mode === 'color' && !/^#[0-9a-f]{6}$/i.test($('color').value)) {
+    setStatus('Click the map to pick a colour first.'); return;
+  }
+  const fd = new FormData();
+  fd.append('image', file);
+  fd.append('mode', mode);
+  fd.append('colors', $('colors').value);
+  fd.append('min_area', $('minArea').value);
+  fd.append('epsilon', $('epsilon').value);
+  fd.append('denoise', $('denoise').value);
+  fd.append('tolerance', $('tolerance').value);
+  if (mode === 'color') fd.append('color', $('color').value);
+  const b = ['west', 'south', 'east', 'north'].map(k => $(k).value);
+  if (b.every(v => v !== '')) fd.append('bounds', JSON.stringify(b.map(Number)));
+
+  setStatus('Detecting…'); $('run').disabled = true;
+  try {
+    const r = await fetch('/api/detect', { method: 'POST', body: fd });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || r.statusText);
+    result = data; render();
+    setStatus(`Found ${data.shapes.length} shapes` + (data.scale < 1 ? ` (map downscaled to ${data.width}×${data.height})` : '') + '.');
+  } catch (err) {
+    setStatus('Error: ' + err.message, true);
+  } finally { $('run').disabled = false; }
+}
+$('run').onclick = detect;
+
+function render() {
+  const { width, height, shapes, summary } = result;
+  const svg = $('overlay');
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.innerHTML = '';
+  $('rows').innerHTML = '';
+  for (const s of shapes) {
+    if (hidden.has(s.type.split(' ')[0])) continue;
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+    p.setAttribute('points', s.polygon.map(pt => pt.join(',')).join(' '));
+    p.setAttribute('stroke', s.draw_color); p.setAttribute('fill', s.draw_color);
+    p.dataset.id = s.id;
+    const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+    title.textContent = `#${s.id} ${s.type} — area ${Math.round(s.area)} px²`;
+    p.appendChild(title);
+    svg.appendChild(p);
+
+    const tr = document.createElement('tr');
+    tr.dataset.id = s.id;
+    tr.innerHTML = `<td>${s.id}</td><td><span style="color:${s.draw_color}">●</span> ${s.type}</td><td class="num">${Math.round(s.area).toLocaleString()}</td><td class="num">${s.vertices}</td>`;
+    $('rows').appendChild(tr);
+  }
+  $('count').textContent = `(${shapes.length})`;
+  $('chips').innerHTML = '';
+  for (const [type, n] of Object.entries(summary)) {
+    const color = shapes.find(s => s.type.split(' ')[0] === type).draw_color;
+    const chip = document.createElement('span');
+    chip.className = 'chip' + (hidden.has(type) ? ' off' : '');
+    chip.innerHTML = `<i style="background:${color}"></i>${type} · ${n}`;
+    chip.onclick = () => { hidden.has(type) ? hidden.delete(type) : hidden.add(type); render(); };
+    $('chips').appendChild(chip);
+  }
+  $('dlGeo').disabled = $('dlPng').disabled = false;
+}
+
+function highlight(id) {
+  document.querySelectorAll('#overlay polygon').forEach(p => {
+    p.classList.toggle('hl', id !== null && p.dataset.id === id);
+    p.classList.toggle('dim', id !== null && p.dataset.id !== id);
+  });
+  document.querySelectorAll('#rows tr').forEach(tr => tr.classList.toggle('hl', tr.dataset.id === id));
+}
+$('overlay').addEventListener('mouseover', e => e.target.dataset.id && highlight(e.target.dataset.id));
+$('overlay').addEventListener('mouseout', () => highlight(null));
+$('rows').addEventListener('mouseover', e => { const tr = e.target.closest('tr'); tr && highlight(tr.dataset.id); });
+$('rows').addEventListener('mouseout', () => highlight(null));
+
+function download(name, href) { const a = document.createElement('a'); a.href = href; a.download = name; a.click(); }
+$('dlGeo').onclick = () => download('shapes.geojson',
+  URL.createObjectURL(new Blob([JSON.stringify(result.geojson, null, 2)], { type: 'application/geo+json' })));
+$('dlPng').onclick = () => download('shapes.png', result.annotated);
+</script>
+</body>
+</html>
